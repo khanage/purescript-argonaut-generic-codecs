@@ -13,7 +13,7 @@ import Data.Array.Partial as Unsafe
 import Data.StrMap as SM
 import Control.MonadPlus (guard)
 import Data.Argonaut.Core (toObject, JObject, fromString, fromArray, Json, jsonNull, fromBoolean, fromNumber, fromObject)
-import Data.Argonaut.Generic.Options (Options(..), SumEncoding(..), dummyUserDecoding, dummyUserEncoding)
+import Data.Argonaut.Generic.Options (Options(..), SumEncoding(..), TaggedObjectOptions, dummyUserDecoding, dummyUserEncoding)
 import Data.Argonaut.Generic.Util (allConstructorsNullary, isUnaryRecord, sigIsMaybe, spineIsRecord)
 import Data.Array (head, length, concatMap, filter, zip, zipWith)
 import Data.Foldable (foldr)
@@ -72,6 +72,42 @@ genericEncodeRecordJson' opts'@(Options opts) sigs fields = fromObject <<< foldr
 
 genericEncodeProdJson' :: Options -> Array DataConstructor -> String -> Array (Unit -> GenericSpine) -> Json
 genericEncodeProdJson' opts'@(Options opts) constrSigns constr args =
+  if not opts.encodeSingleConstructors && isUnaryRecord constrSigns
+  then contents opts.flattenContentsArray
+  else
+    if opts.allNullaryToStringTag && allConstructorsNullary constrSigns
+    then fromString fixedConstr
+    else case opts.sumEncoding of
+      TaggedObject sumConf ->
+        case containedRecord sumConf of
+          Nothing  -> fromObject
+                  $ SM.insert sumConf.tagFieldName (fromString fixedConstr)
+                  $ if opts.flattenContentsArray && length args == 0
+                    then SM.empty
+                    else SM.singleton sumConf.contentsFieldName $ contents (opts.flattenContentsArray || sumConf.unpackRecords)
+          Just obj -> fromObject
+                  $ SM.insert sumConf.tagFieldName (fromString fixedConstr) obj
+
+      ObjectWithSingleField ->
+        fromObject $ SM.singleton fixedConstr $ contents opts.flattenContentsArray
+  where
+    fixedConstr        = opts.constructorTagModifier constr
+    encodedArgs        = genericEncodeProdArgs opts' constrSigns constr args
+
+    containedRecord :: TaggedObjectOptions -> Maybe JObject
+    containedRecord sumConf = do -- handle unpackRecord
+                           guard sumConf.unpackRecords
+                           arg <- (_ $ unit ) <$> head args
+                           guard $ spineIsRecord arg
+                           toObject $ contents (opts.flattenContentsArray || sumConf.unpackRecords)
+
+    contents shouldFlatten =
+      if shouldFlatten && length encodedArgs == 1
+      then unsafeHead encodedArgs
+      else fromArray encodedArgs
+
+genericEncodeProdJson'' :: Partial => Options -> Array DataConstructor -> String -> Array (Unit -> GenericSpine) -> Json
+genericEncodeProdJson'' opts'@(Options opts) constrSigns constr args =
   if not opts.encodeSingleConstructors && isUnaryRecord constrSigns
   then contents
   else

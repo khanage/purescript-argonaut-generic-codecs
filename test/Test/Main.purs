@@ -287,6 +287,8 @@ main = do
   genericsCheck $ Options $ unwrapOpts { fieldLabelModifier = toUpper }
   log "genericsCheck check with omitNothingFields"
   genericsCheck $ Options $ unwrapOpts { omitNothingFields = true }
+  log "genericsCheck with SingleTag"
+  genericsCheck $ Options $ unwrapOpts { sumEncoding = ObjectWithSingleField }
 
 print :: forall a eff. Show a => a -> Eff (console :: CONSOLE | eff) Unit
 print = log <<< show

@@ -15,24 +15,24 @@ newtype Options = Options { -- newtype necessary to avoid: https://github.com/pu
   -- | Modify the tag, e.g. strip module path with: `stripModulePath`e
   constructorTagModifier  :: String -> String
   -- | If all constructors of a sum type are nullary, just serialize the constructor name as a string.
-, allNullaryToStringTag   :: Boolean
+  , allNullaryToStringTag   :: Boolean
   -- | Options on how to do encoding of sum types.
-, sumEncoding             :: SumEncoding
+  , sumEncoding             :: SumEncoding
   -- | If a constructor has exactly one field, do not serialize as array.
   -- | Also, if the constructor has no fields, skip the contents field (aeson >= 1 behavior).
-, flattenContentsArray    :: Boolean -- Flatten array to simple value, if constructor only takes a single value
+  , flattenContentsArray    :: Boolean -- Flatten array to simple value, if constructor only takes a single value
   -- | You need a newtype wrapper encoding/decoding of records, set this
   --   to false if you want the plain Javascript object without a wrapping tagged object.
   --
   --   If an ADT only defines one data constructor, the data constructor will be omitted in the encoding when set to false.
   , encodeSingleConstructors :: Boolean
--- | You can choose to encode some data types differently than the generic default.
--- | Find a thorough example for doing this in "Data.Argonaut.Generic.Aeson"!
--- | Just return Nothing if you want to relay to generic encoding.
-, userEncoding :: Options -> GenericSignature -> GenericSpine -> Maybe Json
--- | You can choose to decode some data types differently than the generic default.
--- | Just return Nothing, to relay to generic decoding.
-, userDecoding :: Options -> GenericSignature -> Json -> Maybe (Either String GenericSpine)
+  -- | You can choose to encode some data types differently than the generic default.
+  -- | Find a thorough example for doing this in "Data.Argonaut.Generic.Aeson"!
+  -- | Just return Nothing if you want to relay to generic encoding.
+  , userEncoding :: Options -> GenericSignature -> GenericSpine -> Maybe Json
+  -- | You can choose to decode some data types differently than the generic default.
+  -- | Just return Nothing, to relay to generic decoding.
+  , userDecoding :: Options -> GenericSignature -> Json -> Maybe (Either String GenericSpine)
   -- | Modify a fields label, e.g. convert the case from that used remotely.
   , fieldLabelModifier :: String -> String
   -- | If True record fields with a Nothing value will be omitted from the resulting object.
@@ -40,19 +40,26 @@ newtype Options = Options { -- newtype necessary to avoid: https://github.com/pu
   , omitNothingFields :: Boolean
 }
 
-data SumEncoding =
-  -- | Serialize as tagged object.
-  -- | The Javascript object will have a tag field, with the
-  -- | `constructorTagModifier constructorName` name as contents
-  -- | and a contents field, which contains an array with the constructor
-  -- | parameters.
-  TaggedObject {
+type TaggedObjectOptions = {
     tagFieldName :: String
   , contentsFieldName :: String
     -- | Should a contained record's fields be put in the tagged object record directly, like in Aeson?
     -- | http://hackage.haskell.org/package/aeson/docs/Data-Aeson-Types.html#v:SumEncoding
   , unpackRecords :: Boolean
   }
+
+
+data SumEncoding =
+  -- | Serialize as tagged object.
+  -- | The Javascript object will have a tag field, with the
+  -- | `constructorTagModifier constructorName` name as contents
+  -- | and a contents field, which contains an array with the constructor
+  -- | parameters.
+  TaggedObject TaggedObjectOptions
+  -- | A constructor will be encoded to an object with a single field named after the constructor tag
+  -- | (modified by the `constructorTagModifier constructorName`)
+  -- | which maps to the encoded contents of the constructor.
+  | ObjectWithSingleField
 
 
 -- | Use this for `userEncoding` if you don't want any special rules.

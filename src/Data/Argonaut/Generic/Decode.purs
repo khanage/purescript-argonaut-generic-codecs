@@ -10,19 +10,20 @@ module Data.Argonaut.Generic.Decode
   ) where
 
 import Data.Argonaut.Generic.Util
+import Control.MonadZero (guard)
+import Data.Argonaut.Core (Json, fromArray, fromObject, jsonNull, stringify, toArray, toBoolean, toNumber, toObject, toString)
+import Data.Argonaut.Generic.Options (Options(..), SumEncoding(..), TaggedObjectOptions, dummyUserDecoding, dummyUserEncoding)
+import Data.Array (head, length, zipWithA)
 import Data.Array.Partial as Unsafe
-import Data.StrMap as M
-import Data.Argonaut.Core (Json, fromArray, fromObject, jsonNull, toArray,
-                          toBoolean, toNumber, toObject, toString, stringify)
-import Data.Argonaut.Generic.Options (Options(..), SumEncoding(..), dummyUserDecoding, dummyUserEncoding)
-import Data.Array (zipWithA, length)
 import Data.Either (Either(Right, Left))
 import Data.Foldable (find)
 import Data.Generic (class Generic, DataConstructor, GenericSignature(..), GenericSpine(..), fromSpine, toSignature)
 import Data.Int (fromNumber)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.StrMap as M
 import Data.String (toChar)
 import Data.Traversable (traverse, for)
+import Data.Tuple (Tuple(..))
 import Partial.Unsafe (unsafePartial)
 import Prelude (not, const, pure, bind, unit, map, (&&), ($), (<<<), (==), (<>), (<$>), (=<<), (||))
 import Type.Proxy (Proxy(..))
@@ -64,8 +65,51 @@ genericDecodeJson' opts'@(Options opts) signature json = case signature of
   SigProd typeConstr constrSigns -> genericDecodeProdJson' opts' typeConstr constrSigns json
 
 genericDecodeProdJson' :: Options ->  String -> Array DataConstructor -> Json -> Either String GenericSpine
-genericDecodeProdJson' opts'@(Options opts@{ sumEncoding: TaggedObject sumConf }) tname constrSigns json = unsafePartial $
-    -- ^ Only TaggedObject encoding is supported - FIX ME!
+genericDecodeProdJson' opts'@(Options opts) tname constrSigns json = unsafePartial $
+  case opts.sumEncoding of
+    TaggedObject sumConf -> genericDecodeTagged opts' sumConf tname constrSigns json
+    ObjectWithSingleField -> genericDecodeSingleObject opts' tname constrSigns json
+
+genericDecodeSingleObject :: Options -> String -> Array DataConstructor -> Json -> Either String GenericSpine
+genericDecodeSingleObject opts'@(Options opts) tname constrSigns json =
+  if not opts.encodeSingleConstructors && isUnaryRecord constrSigns
+  then do
+    constr <- mFail "No constrSigns" $ head constrSigns
+    decodeConstructor constr json
+  else
+    if opts.allNullaryToStringTag && allConstructorsNullary constrSigns
+    then decodeFromString
+    else decodeSingle
+  where
+    decodeFromString = do
+      tag <- mFail' (decodingErr "Constructor name as string expected") json (toString json)
+      foundConstr <- findConstrFail tag
+      pure (SProd foundConstr.sigConstructor [])
+    decodeSingle = do
+      jObj <- mFail' (decodingErr "expected an object") json (toObject json)
+
+      let tupled = M.toArrayWithKey Tuple jObj
+
+      _ <- mFail ("Expected a single field with a constructor.") $ guard (length tupled == 1)
+      Tuple constructorName contents <- mFail "No key found" $ head tupled
+
+      foundConstr <- findConstrFail constructorName
+      decodeConstructor foundConstr contents
+
+    decodeConstructor constr jVals = do
+      vals <- if opts.flattenContentsArray && (length constr.sigValues == 1)
+              then pure [jVals]
+              else mFail' (decodingErr "Expected array") json (toArray jVals)
+      sps <- zipWithA (\k -> genericUserDecodeJson' opts' (k unit)) constr.sigValues vals
+      pure (SProd constr.sigConstructor (const <$> sps))
+
+    decodingErr msg = "When decoding a " <> tname <> ": " <> msg
+    fixConstr      = opts.constructorTagModifier
+    findConstrFail tag = mFail (decodingErr ("'" <> tag <> "' isn't a valid constructor")) (findConstr tag)
+    findConstr tag = find ((tag == _) <<< fixConstr <<< _.sigConstructor) constrSigns
+
+genericDecodeTagged :: Options -> TaggedObjectOptions -> String -> Array DataConstructor -> Json -> Either String GenericSpine
+genericDecodeTagged opts'@(Options opts) sumConf tname constrSigns json = unsafePartial $
   if not opts.encodeSingleConstructors && isUnaryRecord constrSigns
   then do
     let constr = Unsafe.head constrSigns
